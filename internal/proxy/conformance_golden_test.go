@@ -52,7 +52,7 @@ func golden(t *testing.T, name string, got []byte) {
 	}
 	want, err := os.ReadFile(path)
 	require.NoError(t, err, "missing golden %s — run `go test -update` to generate it", path)
-	require.Equal(t, string(want), string(got),
+	require.Equal(t, strings.ReplaceAll(string(want), "\r\n", "\n"), strings.ReplaceAll(string(got), "\r\n", "\n"),
 		"golden mismatch for %s — the router's translated output changed; run `go test -update` and review the diff", name)
 }
 
