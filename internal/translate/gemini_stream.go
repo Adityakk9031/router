@@ -35,7 +35,9 @@ type GeminiToOpenAISSETranslator struct {
 	lifecycle *StreamLifecycle
 	// pendingSig is a thoughtSignature from a text part with no functionCall
 	// sibling, held for the next tool_call chunk.
-	pendingSig string
+	pendingSig      string
+	currentToolID   string
+	currentToolName string
 
 	usageSink UsageSink
 
@@ -202,13 +204,11 @@ func (t *GeminiToOpenAISSETranslator) translateEvent(raw []byte) error {
 	parts := candidate.Get("content.parts")
 	if parts.IsArray() {
 		var emitErr error
+		partIdx := 0
 		parts.ForEach(func(_, part gjson.Result) bool {
 			if fc := part.Get("functionCall"); fc.Exists() {
 				name := fc.Get("name").String()
 				argsRaw := fc.Get("args").Raw
-				if argsRaw == "" || argsRaw == "null" {
-					argsRaw = "{}"
-				}
 				sig := part.Get("thoughtSignature").String()
 				if sig == "" && t.pendingSig != "" {
 					sig = t.pendingSig
@@ -218,11 +218,40 @@ func (t *GeminiToOpenAISSETranslator) translateEvent(raw []byte) error {
 					// part in a turn carries one.
 					t.pendingSig = sig
 				}
-				if err := t.emitToolCallChunk(t.toolIdx, name, argsRaw, sig); err != nil {
-					emitErr = err
-					return false
+
+				if partIdx > 0 && t.currentToolID != "" {
+					// Multiple functionCall parts within the same response chunk
+					t.toolIdx++
+					t.currentToolID = embedSignatureInID(generateToolCallID(), sig)
+					t.currentToolName = name
+				} else if name != "" && t.currentToolName != "" && t.currentToolName != name {
+					// Tool name changed in a subsequent chunk
+					t.toolIdx++
+					t.currentToolID = embedSignatureInID(generateToolCallID(), sig)
+					t.currentToolName = name
+				} else if t.currentToolID == "" {
+					t.currentToolID = embedSignatureInID(generateToolCallID(), sig)
+					t.currentToolName = name
 				}
-				t.toolIdx++
+
+				if name != "" {
+					if argsRaw == "" || argsRaw == "null" {
+						argsRaw = "{}"
+					}
+					if err := t.emitToolCallChunk(t.toolIdx, t.currentToolID, name, argsRaw); err != nil {
+						emitErr = err
+						return false
+					}
+				} else {
+					if argsRaw == "" || argsRaw == "null" {
+						argsRaw = ""
+					}
+					if err := t.emitToolCallArgsOnlyChunk(t.toolIdx, argsRaw); err != nil {
+						emitErr = err
+						return false
+					}
+				}
+				partIdx++
 				return true
 			}
 			if text := part.Get("text"); text.Exists() && text.String() != "" {
@@ -234,6 +263,7 @@ func (t *GeminiToOpenAISSETranslator) translateEvent(raw []byte) error {
 					return false
 				}
 			}
+			partIdx++
 			return true
 		})
 		if emitErr != nil {
@@ -244,7 +274,8 @@ func (t *GeminiToOpenAISSETranslator) translateEvent(raw []byte) error {
 	usage := geminiUsageFromBytes(data)
 	finishReason := candidate.Get("finishReason").String()
 	if finishReason != "" {
-		mapped := mapGeminiFinishReason(finishReason, t.toolIdx > 0)
+		hasTools := t.currentToolID != "" || t.toolIdx > 0
+		mapped := mapGeminiFinishReason(finishReason, hasTools)
 		if err := t.emitFinalChunk(mapped, usage); err != nil {
 			return err
 		}
@@ -301,10 +332,9 @@ func (t *GeminiToOpenAISSETranslator) emitTextDelta(text string) error {
 }
 
 // emitToolCallChunk emits an OpenAI tool_calls delta with the full arguments
-// JSON in one chunk. The Gemini thoughtSignature is smuggled into the tool-call
-// id (embedSignatureInID) so it replays on the next request without an
-// off-spec field that typed SDKs drop and Anthropic upstreams reject.
-func (t *GeminiToOpenAISSETranslator) emitToolCallChunk(idx int, name, argsRaw, sig string) error {
+// JSON or initial declaration. The Gemini thoughtSignature is smuggled into
+// the tool-call id (embedSignatureInID) so it replays on the next request.
+func (t *GeminiToOpenAISSETranslator) emitToolCallChunk(idx int, id, name, argsRaw string) error {
 	if err := t.ensureStarted(); err != nil {
 		return err
 	}
@@ -312,7 +342,6 @@ func (t *GeminiToOpenAISSETranslator) emitToolCallChunk(idx int, name, argsRaw, 
 		return err
 	}
 	t.markOutputProgress()
-	id := embedSignatureInID(generateToolCallID(), sig)
 	t.writeChunkHeader()
 	t.bw.WriteString(`"choices":[{"index":0,"delta":{"tool_calls":[{"index":`)
 	sse.WriteJSONInt(t.bw, int64(idx))
@@ -322,6 +351,24 @@ func (t *GeminiToOpenAISSETranslator) emitToolCallChunk(idx int, name, argsRaw, 
 	sse.WriteJSONString(t.bw, name)
 	t.bw.WriteString(`,"arguments":`)
 	// arguments must be a JSON-encoded string in OpenAI's wire format.
+	sse.WriteJSONString(t.bw, argsRaw)
+	t.bw.WriteString(`}}]},"finish_reason":null}]}`)
+	t.bw.WriteString("\n\n")
+	return t.flushEvent()
+}
+
+func (t *GeminiToOpenAISSETranslator) emitToolCallArgsOnlyChunk(idx int, argsRaw string) error {
+	if err := t.ensureStarted(); err != nil {
+		return err
+	}
+	if err := t.lifecycle.Output(0); err != nil {
+		return err
+	}
+	t.markOutputProgress()
+	t.writeChunkHeader()
+	t.bw.WriteString(`"choices":[{"index":0,"delta":{"tool_calls":[{"index":`)
+	sse.WriteJSONInt(t.bw, int64(idx))
+	t.bw.WriteString(`,"function":{"arguments":`)
 	sse.WriteJSONString(t.bw, argsRaw)
 	t.bw.WriteString(`}}]},"finish_reason":null}]}`)
 	t.bw.WriteString("\n\n")

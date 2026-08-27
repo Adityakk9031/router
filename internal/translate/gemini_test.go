@@ -1402,3 +1402,43 @@ func TestIsIntrinsicallyIncompatible(t *testing.T) {
 		})
 	}
 }
+
+func TestGeminiToOpenAISSETranslator_MultiChunkToolCall(t *testing.T) {
+	rec := httptest.NewRecorder()
+	tr := translate.NewGeminiToOpenAISSETranslator(rec, "gemini-3.1-pro-preview", nil)
+	rec.Header().Set("Content-Type", "text/event-stream")
+	tr.WriteHeader(http.StatusOK)
+
+	// Feed chunk 1: start of tool call with name
+	chunk1 := []byte("data: " + `{"candidates":[{"content":{"parts":[{"functionCall":{"name":"execute_command","args":{"cmd":"ls"}}}]}}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5}}` + "\n\n")
+	_, err := tr.Write(chunk1)
+	require.NoError(t, err)
+
+	// Feed chunk 2: continuation with partial args, no name
+	chunk2 := []byte("data: " + `{"candidates":[{"content":{"parts":[{"functionCall":{"args":{"flags":"-la"}}}]}}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":10}}` + "\n\n")
+	_, err = tr.Write(chunk2)
+	require.NoError(t, err)
+
+	// Feed chunk 3: finishReason STOP
+	chunk3 := []byte("data: " + `{"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":12}}` + "\n\n")
+	_, err = tr.Write(chunk3)
+	require.NoError(t, err)
+	require.NoError(t, tr.Finalize())
+
+	body := rec.Body.String()
+	lines := strings.Split(body, "\n")
+	var toolChunks []string
+	for _, l := range lines {
+		if strings.HasPrefix(l, "data: {") && strings.Contains(l, `"delta":{"tool_calls"`) {
+			toolChunks = append(toolChunks, l)
+		}
+	}
+	require.Len(t, toolChunks, 2, "must emit 2 tool delta chunks")
+
+	// Both chunks must be index 0 (not incrementing index)
+	assert.Contains(t, toolChunks[0], `"index":0`)
+	assert.Contains(t, toolChunks[0], `"name":"execute_command"`)
+	assert.Contains(t, toolChunks[1], `"index":0`)
+	assert.NotContains(t, toolChunks[1], `"index":1`)
+}
+
