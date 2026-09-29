@@ -54,6 +54,12 @@ Claude Code keep using the user's logged-in plan.
 | `WAFER_API_KEY`   | *(none)*                                                  | Enables Wafer Serverless (both its OpenAI-compatible `wafer` and Anthropic-compatible `wafer_anthropic` surfaces; one key covers both). |
 | `WAFER_BASE_URL`  | `https://pass.wafer.ai/v1`                                | Override for the Wafer OpenAI-compatible endpoint (`wafer_anthropic` uses the fixed `/v1/messages` endpoint). |
 
+> [!TIP]
+> **Verifying provider keys in Docker Compose:** The router container runs on distroless Debian and does not include a shell or `printenv`. Running `docker compose exec server printenv` fails because `printenv` is not present in the image. To verify loaded variables or check enabled providers:
+> - Inspect container configuration: `docker inspect $(docker compose ps -q server) --format '{{json .Config.Env}}'`
+> - Check startup logs: `docker compose logs server | grep "provider enabled"`
+> - Query the admin config API: `curl -sS -H "Authorization: Bearer <rk_token>" http://localhost:8080/admin/v1/config` (inspect the `env_provider_keys` list).
+
 **Anthropic-compatible gateway.** Some enterprises front Claude with their own
 gateway that speaks the Anthropic Messages spec but authenticates with a bearer
 token instead of `x-api-key`. The router serves the Claude family through it on
@@ -174,6 +180,15 @@ curl -sS -b jar -X PUT https://<router>/admin/v1/provider-keys/<key id>/model-al
   -H 'content-type: application/json' \
   -d '{"model_aliases":{"claude-fable-5":"internal.claude-fable-5"}}'
 ```
+
+> [!IMPORTANT]
+> **Gateway-exclusive routing mode:** Registering a key for `anthropic_gateway` or `openai_gateway` puts the router in gateway-exclusive routing mode for that provider. Under this mode, the router only routes models that are explicitly configured in that gateway key's `model_aliases`. If a gateway key is saved with an empty `model_aliases` map, no models will be eligible for routing and requests will fail with:
+> `"No model can be routed through your gateway: your gateway keys don't alias any available model."`
+
+> [!TIP]
+> **Custom OpenAI-compatible providers (e.g. Venice, Together, vLLM, Ollama):** For self-hosted deployments targeting custom OpenAI-compatible providers without needing custom gateway routing or enterprise gateways:
+> - Set `OPENROUTER_BASE_URL` to your custom provider's `/v1` endpoint and set `OPENROUTER_API_KEY`. If your provider serves models under names different from the router's catalog, configure model name translations using `ROUTER_MODEL_ID_MAP` (e.g. `ROUTER_MODEL_ID_MAP=deepseek/deepseek-v4-flash=deepseek-v4-flash`).
+> - Alternatively, configure `OPENAI_BASE_URL` and `OPENAI_API_KEY` in `.env.local` to point the native OpenAI client to any custom OpenAI-compatible endpoint.
 
 ### Key-pair auth
 
