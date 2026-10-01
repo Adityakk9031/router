@@ -1157,13 +1157,28 @@ func isEmptyDomainList(v any) bool {
 	}
 }
 
+func isUnsupportedAnthropicPattern(pattern string) bool {
+	// Anthropic rejects regex lookarounds (e.g. (?=...), (?!...), (?<=...), (?<!...))
+	// in JSON Schema pattern attributes.
+	if strings.Contains(pattern, "(?") {
+		return true
+	}
+	if _, err := regexp.Compile(pattern); err != nil {
+		return true
+	}
+	return false
+}
+
 func sanitizeAnthropicSchema(v any) any {
 	switch node := v.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(node))
 		for k, child := range node {
 			if k == "pattern" {
-				continue
+				s, ok := child.(string)
+				if !ok || isUnsupportedAnthropicPattern(s) {
+					continue
+				}
 			}
 			out[k] = sanitizeAnthropicSchema(child)
 		}

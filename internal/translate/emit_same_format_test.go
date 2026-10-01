@@ -427,6 +427,33 @@ func TestAnthropicSameFormat_StripsUnsupportedToolSchemaPattern(t *testing.T) {
 	assert.Equal(t, "decimal", amount["description"])
 }
 
+func TestAnthropicSameFormat_PreservesValidToolSchemaPattern(t *testing.T) {
+	body := []byte(`{"model":"claude-sonnet-4-20250514","messages":[{"role":"user","content":"hello"}],"max_tokens":1024,"tools":[{
+		"name":"IDTool",
+		"description":"uses standard regex pattern",
+		"input_schema":{
+			"type":"object",
+			"properties":{
+				"id":{"type":"string","pattern":"^[a-zA-Z0-9_-]{1,64}$","description":"identifier"}
+			},
+			"required":["id"]
+		}
+	}]}`)
+	opts := translate.EmitOptions{
+		TargetModel:  "claude-opus-4-7",
+		Capabilities: router.Lookup("claude-opus-4-7"),
+	}
+	out := parseAndEmit(t, body, "anthropic", opts)
+
+	tools, _ := out["tools"].([]any)
+	require.Len(t, tools, 1)
+	tool, _ := tools[0].(map[string]any)
+	inputSchema, _ := tool["input_schema"].(map[string]any)
+	props, _ := inputSchema["properties"].(map[string]any)
+	idProp, _ := props["id"].(map[string]any)
+	assert.Equal(t, "^[a-zA-Z0-9_-]{1,64}$", idProp["pattern"], "valid standard regex pattern must be preserved")
+}
+
 func TestAnthropicSameFormat_OmitsEmptyWebSearchDomainLists(t *testing.T) {
 	body := []byte(`{"model":"claude-opus-4-8","messages":[{"role":"user","content":"search"}],"max_tokens":1024,"tools":[{
 		"type":"web_search_20250305",
@@ -547,6 +574,41 @@ func TestOpenAIToAnthropic_StripsUnsupportedToolSchemaPattern(t *testing.T) {
 	assert.NotContains(t, amount, "pattern", "Anthropic rejects regex lookahead in JSON Schema patterns")
 	assert.Equal(t, "string", amount["type"])
 	assert.Equal(t, "decimal", amount["description"])
+}
+
+func TestOpenAIToAnthropic_PreservesValidToolSchemaPattern(t *testing.T) {
+	body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}],"tools":[{
+		"type":"function",
+		"function":{
+			"name":"IDTool",
+			"description":"uses standard regex pattern",
+			"parameters":{
+				"type":"object",
+				"properties":{
+					"id":{"type":"string","pattern":"^[a-zA-Z0-9_-]{1,64}$","description":"identifier"}
+				},
+				"required":["id"]
+			}
+		}
+	}]}`)
+	opts := translate.EmitOptions{
+		TargetModel:  "claude-opus-4-7",
+		Capabilities: router.Lookup("claude-opus-4-7"),
+	}
+	env, err := translate.ParseOpenAI(body)
+	require.NoError(t, err)
+	prep, err := env.PrepareAnthropic(http.Header{}, opts)
+	require.NoError(t, err)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(prep.Body, &out))
+
+	tools, _ := out["tools"].([]any)
+	require.Len(t, tools, 1)
+	tool, _ := tools[0].(map[string]any)
+	inputSchema, _ := tool["input_schema"].(map[string]any)
+	props, _ := inputSchema["properties"].(map[string]any)
+	idProp, _ := props["id"].(map[string]any)
+	assert.Equal(t, "^[a-zA-Z0-9_-]{1,64}$", idProp["pattern"], "valid standard regex pattern must be preserved")
 }
 
 func TestAnthropicSameFormat_LeadingSystemMessageHoistedWhenNoSystemField(t *testing.T) {
