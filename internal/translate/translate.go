@@ -383,12 +383,31 @@ func writeAnthropicUsageFromOpenAI(jw *jsonWriter, usage gjson.Result) {
 	jw.EndObj()
 }
 
-// OpenAIToAnthropicError re-wraps an OpenAI error as Anthropic format.
+// OpenAIToAnthropicError re-wraps an OpenAI or Gemini error as Anthropic format.
 func OpenAIToAnthropicError(body []byte) []byte {
 	errType := gjson.GetBytes(body, "error.type").String()
 	errMsg := gjson.GetBytes(body, "error.message").String()
-	if errType == "" && errMsg == "" {
+	status := gjson.GetBytes(body, "error.status").String()
+	if errType == "" && errMsg == "" && status == "" {
 		return body
+	}
+	if errType == "" && status != "" {
+		switch strings.ToUpper(status) {
+		case "RESOURCE_EXHAUSTED":
+			errType = "rate_limit_error"
+		case "UNAVAILABLE":
+			errType = "overloaded_error"
+		case "INVALID_ARGUMENT":
+			errType = "invalid_request_error"
+		default:
+			errType = "api_error"
+		}
+	}
+	if errType == "" {
+		errType = "api_error"
+	}
+	if errMsg == "" && status != "" {
+		errMsg = status
 	}
 	jw := newJSONWriter()
 	jw.Obj()
