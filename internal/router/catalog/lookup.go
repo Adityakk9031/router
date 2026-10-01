@@ -283,6 +283,16 @@ func ContextWindowFor(id string) int {
 	return m.ContextWindow
 }
 
+// EffectiveContextWindowFor returns the effective context window in tokens for
+// the model, accounting for extended-context capabilities (CapExtendedContext
+// models unlock a 1M token window).
+func EffectiveContextWindowFor(id string) int {
+	if router.Lookup(id).Supports(router.CapExtendedContext) {
+		return 1_000_000
+	}
+	return ContextWindowFor(id)
+}
+
 // ContextWindowForBinding returns the context window for modelID on provider,
 // preferring a non-zero ProviderBinding.ContextWindow over the model-level value.
 // Returns DefaultContextWindow for an unknown model.
