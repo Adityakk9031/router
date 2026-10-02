@@ -729,6 +729,30 @@ func TestOpenAIToAnthropicError_GeminiStatusMapping(t *testing.T) {
 			wantMsg:  "Bad request",
 		},
 		{
+			name:     "permission denied maps to permission_error",
+			input:    `{"error":{"code":403,"message":"Permission denied","status":"PERMISSION_DENIED"}}`,
+			wantType: "permission_error",
+			wantMsg:  "Permission denied",
+		},
+		{
+			name:     "unauthenticated maps to authentication_error",
+			input:    `{"error":{"code":401,"message":"Unauthenticated","status":"UNAUTHENTICATED"}}`,
+			wantType: "authentication_error",
+			wantMsg:  "Unauthenticated",
+		},
+		{
+			name:     "not found maps to not_found_error",
+			input:    `{"error":{"code":404,"message":"Model not found","status":"NOT_FOUND"}}`,
+			wantType: "not_found_error",
+			wantMsg:  "Model not found",
+		},
+		{
+			name:     "lowercased type from GeminiToOpenAIError maps to Anthropic type",
+			input:    `{"error":{"code":429,"message":"Rate exceeded","type":"resource_exhausted"}}`,
+			wantType: "rate_limit_error",
+			wantMsg:  "Rate exceeded",
+		},
+		{
 			name:     "empty type with message defaults to api_error",
 			input:    `{"error":{"type":"","message":"Something broke"}}`,
 			wantType: "api_error",
