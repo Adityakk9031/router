@@ -243,7 +243,7 @@ func TestResolverKeepsOverflowAdmittedModels(t *testing.T) {
 	)
 
 	resolved := resolver.Resolve(router.Request{
-		EstimatedInputTokens:   catalog.ContextWindowFor("claude-haiku-4-5") + 1,
+		EstimatedInputTokens:   catalog.EffectiveContextWindowFor("claude-opus-4-8") + 1,
 		OverflowAdmittedModels: set("claude-opus-4-8"),
 	})
 
