@@ -1158,15 +1158,13 @@ func isEmptyDomainList(v any) bool {
 }
 
 func isUnsupportedAnthropicPattern(pattern string) bool {
-	// Anthropic rejects regex lookarounds (e.g. (?=...), (?!...), (?<=...), (?<!...))
-	// in JSON Schema pattern attributes.
-	if strings.Contains(pattern, "(?") {
+	// Strict tools validate patterns against a narrower dialect than RE2: lookarounds,
+	// inline flags and \b/\B 400 the request, and Go compiles the latter two.
+	if strings.Contains(pattern, "(?") || strings.Contains(pattern, `\b`) || strings.Contains(pattern, `\B`) {
 		return true
 	}
-	if _, err := regexp.Compile(pattern); err != nil {
-		return true
-	}
-	return false
+	_, err := regexp.Compile(pattern)
+	return err != nil
 }
 
 func sanitizeAnthropicSchema(v any) any {

@@ -454,6 +454,36 @@ func TestAnthropicSameFormat_PreservesValidToolSchemaPattern(t *testing.T) {
 	assert.Equal(t, "^[a-zA-Z0-9_-]{1,64}$", idProp["pattern"], "valid standard regex pattern must be preserved")
 }
 
+func TestAnthropicSameFormat_StripsToolSchemaPatternOutsideStrictDialect(t *testing.T) {
+	body := []byte(`{"model":"claude-sonnet-4-20250514","messages":[{"role":"user","content":"hello"}],"max_tokens":1024,"tools":[{
+		"name":"WordTool",
+		"description":"uses RE2-valid patterns Anthropic strict tools reject",
+		"strict":true,
+		"input_schema":{
+			"type":"object",
+			"properties":{
+				"word":{"type":"string","pattern":"\\bfoo\\b"},
+				"code":{"type":"string","pattern":"(?i)^abc$"}
+			}
+		}
+	}]}`)
+	opts := translate.EmitOptions{
+		TargetModel:  "claude-opus-4-7",
+		Capabilities: router.Lookup("claude-opus-4-7"),
+	}
+	out := parseAndEmit(t, body, "anthropic", opts)
+
+	tools, _ := out["tools"].([]any)
+	require.Len(t, tools, 1)
+	tool, _ := tools[0].(map[string]any)
+	inputSchema, _ := tool["input_schema"].(map[string]any)
+	props, _ := inputSchema["properties"].(map[string]any)
+	word, _ := props["word"].(map[string]any)
+	code, _ := props["code"].(map[string]any)
+	assert.NotContains(t, word, "pattern")
+	assert.NotContains(t, code, "pattern")
+}
+
 func TestAnthropicSameFormat_OmitsEmptyWebSearchDomainLists(t *testing.T) {
 	body := []byte(`{"model":"claude-opus-4-8","messages":[{"role":"user","content":"search"}],"max_tokens":1024,"tools":[{
 		"type":"web_search_20250305",
